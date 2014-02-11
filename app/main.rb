@@ -1,6 +1,7 @@
 #!/usr/bin/env ruby
 
 require_relative 'shoot40k_6_2'
+include Shoot40k
 
 times = ARGV[0] ? ARGV[0].to_i : 10
 
@@ -64,9 +65,13 @@ targets.each do |target|
         shooting = Shooting.new(weapons, target)
         1.upto(times) do |i|
             shooting.shoot
-puts if $debug
         end
-        target.print_interpretation(times, weapons)
+        stats, events = target.result
+        puts "#{weapons.name} vs. #{target.name}"
+        puts "Mean: #{stats.mean}, 80th percentile: #{stats.percentile(20)}"
+        events.keys.sort.each do |evt|
+            puts "#{evt}: #{100 * events[evt] / times}%"
+        end
         puts
     end
 end

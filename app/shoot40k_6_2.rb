@@ -1,7 +1,26 @@
-#!/usr/bin/env ruby
+require 'logger'
+require_relative 'stats'
 
-$debug = false
-#$debug = true
+module Shoot40k
+
+class NullLogger < Logger
+  def initialize(*args)
+  end
+
+  def add(*args, &block)
+  end
+end
+
+@@logger = NullLogger.new
+
+def self.logger
+    @@logger
+end
+
+def self.logger=(l)
+    @@logger = l || NullLogger.new
+end
+
 $template_hits = 4
 $blast_hits = 2
 $large_blast_hits = 5
@@ -66,7 +85,7 @@ end
 module Template 
     def hits(target)
         hits = count * [$template_hits, target.count].min
-        print "Hit!" * hits if $debug
+        Shoot40k.logger.debug("Hit!" * hits)
         hits
     end
 
@@ -107,7 +126,7 @@ module Rending
 
     def ap
         if @wnd_roll == 6
-print "Rend!" if $debug
+Shoot40k.logger.debug "Rend!"
             2
         else
             super
@@ -176,7 +195,7 @@ class Weapon
         1.upto(count) do |i|
             if Charts.shoot_hit?(bs(target), Dice.d6, reroll_hits?)
 		counter += 1
-                print "Hit!" if $debug
+                Shoot40k.logger.debug "Hit!" 
             end
         end
         counter
@@ -262,48 +281,6 @@ class Save
     end
 end
 
-class Stats
-    attr_reader :mean, :mode
-    def initialize(data)
-        d = data.sort
-        @mean = d.inject(0){|acc, n| acc+n}.to_f / d.size
-
-        vcounts = d.inject({}) do |acc, v|
-            c = acc[v] || 0
-            acc[v] = c + 1
-            acc
-        end
-
-        mcount = vcounts.values.max
-        mvals = vcounts.select{|k, v| v == mcount}.map{|k, v| k}
-        @mode = mvals.inject(0){|acc, n| acc+n}.to_f / mvals.size
-
-        @data = []
-        d.each_with_index do |v, n|
-            p = ((n.to_f - 0.5) * 100 / d.size).ceil
-            @data << [v, p]
-        end
-    end
-
-    def median
-        percentile(50)
-    end
-
-    def percentile(p)
-        if(p < @data.first.last)
-            @data.first.first
-        elsif(p > @data.last.last)
-            @data.last.first
-        else
-            k = (p.to_f * @data.size / 100 + 0.5).floor
-            pk = @data[k].last
-            vk = @data[k].first
-            vk1 = @data[k + 1].first
-            vk.to_f + (vk1 - vk).to_f * (p - pk) * @data.size / 100
-        end
-    end
-end
-
 module OpenTopped
     def open_topped?
         true
@@ -322,6 +299,8 @@ class Target
         @name = name
         @count = count
         @sv = sv
+        @events = Hash.new(0) 
+        @data = []
         extend(*types) if types && !types.empty?
     end 
 
@@ -336,6 +315,21 @@ class Target
     def skimmer?
         false
     end 
+    
+    def count_event(*names)
+        names.each{|n| @events[n] += 1}
+    end
+
+    def count_data(n)
+        @data << n
+    end
+
+    def result
+        d, e = @data, @events
+        @data = []
+        @events = Hash.new(0)
+        return Stats.new(d), e
+    end
 end
 
 class Infantry < Target
@@ -343,8 +337,6 @@ class Infantry < Target
         super(name, count, sv, *types)
         @t = t
         @ld = ld
-        @results = []
-        @broken = 0
     end
 
     def initial_state
@@ -354,10 +346,10 @@ class Infantry < Target
     def take_hits(state, nhits, weapon)
         1.upto(nhits) do |hit|
             if(weapon.wounds?(@t))
-print "Wound!" if $debug
+Shoot40k.logger.debug "Wound!"
                 unless @sv.save?(weapon)
                     state.damage += 1
-                    print "No Save!" if $debug
+                    Shoot40k.logger.debug "No Save!" 
                 end
             end
         end
@@ -365,22 +357,13 @@ print "Wound!" if $debug
 
     def interpret(state)
         v = [@count, state.damage].min
-        @results << v
-        break_test if v * 4 > @count
+        count_data(v)
+        count_event("Wiped out") if v == @count
+        count_event("Broken") if v * 4 > @count && break_test
     end
 
     def break_test
-        @broken += 1 if Dice.two_d6.call > @ld
-    end
-
-    def print_interpretation(times, weapon)
-        puts "#{weapon.name} vs. #{@name}"
-        st = Stats.new(@results)
-        puts "Mean: #{st.mean} Mode: #{st.mode} Median: #{st.median} 75th: #{st.percentile(25)} 90th: #{st.percentile(10)}"
-
-        puts "Broken: #{@broken.to_f/times}"
-        @results = []
-        @broken = 0
+        Dice.two_d6.call > @ld
     end
 end
 
@@ -389,7 +372,6 @@ class Vehicle < Target
         super(name, count, sv, *types)
         @armour = armour 
         @hull_points = hull_points
-        @results = {}
         @weapon_count = weapon_count
     end
 
@@ -422,25 +404,16 @@ class Vehicle < Target
     end
 
     def interpret(state)
+        count_data([@hull_points, state.damage[:hp]].min)
         v = state.damage[:results].max
-        count_result(v) if v
-    end
-
-    def count_result(n)
-        c = @results[n] || 0
-        @results[n] = c + 1
-    end
-
-    def print_interpretation(times, weapon)
-        puts "#{weapon.name} vs. #{@name}"
-        any = @results.values.inject(0){|acc, n| n+acc}
-        a = "Any #{any.to_f / times}"
-        dam = @results.values_at(3.5, 4, 5, 5.5, 6).inject(0){|acc, n| n ? n+acc : acc}
-        b = "Damaged #{dam.to_f / times}"
-        wreck = @results.values_at(5.5, 6).inject(0){|acc, n| n ? n+acc : acc}
-        c = "Wrecked #{wreck.to_f / times}"
-        puts [a, b, c].join(', ')
-        @results = {}
+        case v
+           when 3.5
+		count_event("Any")
+           when 4, 5
+                count_event("Any", "Damaged")
+           when 5.5, 6
+                count_event("Any", "Damaged", "Wrecked")
+        end
     end
 end
 
@@ -480,3 +453,4 @@ class WeaponSet < Array
     end
 end
 
+end # Module Shoot40k
