@@ -42,7 +42,7 @@ end
 class Charts
     def self.shoot_hit?(bs, roll_provider = Dice.d6, reroll = false)
         if(bs < 6 || reroll)
-            roll_provider.call > (6 - bs) || (reroll && Charts.shoot_hit([bs, 5].max, roll_provider, false))
+            roll_provider.call > (6 - bs) || (reroll && Charts.shoot_hit?([bs, 5].max, roll_provider, false))
         else
             roll_provider.call > 1 || roll_provider.call > (11 - bs)
         end
@@ -84,6 +84,7 @@ end
 
 module Template 
     def hits(target)
+        return 0 if target.flying?
         hits = count * [$template_hits, target.count].min
         Shoot40k.logger.debug("Hit!" * hits)
         hits
