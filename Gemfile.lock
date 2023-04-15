@@ -2,7 +2,7 @@ GEM
   remote: https://rubygems.org/
   specs:
     hike (1.2.3)
-    json (1.8.1)
+    json (2.6.3)
     multi_json (1.8.4)
     opal (0.5.5)
       source_map
